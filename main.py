@@ -4,8 +4,24 @@ import sys
 import os
 
 from google.cloud import speech
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part
 
 import pyaudio
+
+API_KEY = os.environ.get("GCP_API_KEY")
+
+vertexai.init(
+    project="default-364617",
+    location="asia-northeast1",
+)
+
+
+def generate_ai_response(query: str) -> str:
+    model = GenerativeModel("gemini-1.0-pro")
+    response = model.generate_content([query])
+    return response.text
+
 
 # Audio recording parameters
 RATE = 16000
@@ -161,7 +177,8 @@ def listen_print_loop(responses: object) -> str:
             num_chars_printed = len(transcript)
 
         else:
-            print(transcript + overwrite_chars)
+            print("You: " + transcript + overwrite_chars)
+            print("AI: " + generate_ai_response(transcript + overwrite_chars))
 
             # Exit recognition if any of the transcribed phrases could be
             # one of our keywords.
@@ -180,9 +197,7 @@ def main() -> None:
     # for a list of supported languages.
     language_code = "en-US"  # a BCP-47 language tag
 
-    client = speech.SpeechClient(
-        client_options={"api_key": os.environ.get("GCP_API_KEY")}
-    )
+    client = speech.SpeechClient(client_options={"api_key": API_KEY})
     config = speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
         sample_rate_hertz=RATE,
@@ -190,7 +205,8 @@ def main() -> None:
     )
 
     streaming_config = speech.StreamingRecognitionConfig(
-        config=config, interim_results=True
+        config=config,
+        interim_results=True,
     )
 
     with MicrophoneStream(RATE, CHUNK) as stream:
@@ -207,4 +223,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    print(
+        "=== CHATBOT AI ===\n",
+        generate_ai_response("こんにちは、私とおしゃべりしましょう。"),
+    )
     main()
