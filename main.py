@@ -2,6 +2,8 @@ import queue
 import re
 import sys
 import os
+import wave
+import io
 
 from google.cloud import speech
 from google.cloud import texttospeech
@@ -216,7 +218,8 @@ def text_to_speech(text: str) -> None:
 
     # Select the type of audio file you want returned
     audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.MP3
+        audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+        volume_gain_db=-20.0,
     )
 
     # Perform the text-to-speech request on the text input with the selected
@@ -225,11 +228,17 @@ def text_to_speech(text: str) -> None:
         input=synthesis_input, voice=voice, audio_config=audio_config
     )
 
-    # The response's audio_content is binary.
-    with open("output.mp3", "wb") as out:
-        # Write the response to the output file.
-        out.write(response.audio_content)
-        print('Audio content written to file "output.mp3"')
+    wf = wave.open(io.BytesIO(response.audio_content), "rb")
+
+    audio = pyaudio.PyAudio()
+    audio.open(
+        format=audio.get_format_from_width(wf.getsampwidth()),
+        channels=wf.getnchannels(),
+        rate=wf.getframerate(),
+        output=True,
+    ).write(response.audio_content)
+
+    audio.terminate()
 
 
 def main() -> None:
