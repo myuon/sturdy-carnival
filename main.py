@@ -20,18 +20,18 @@ vertexai.init(
 )
 
 tts_client = texttospeech.TextToSpeechClient()
+model = GenerativeModel(
+    "gemini-1.0-pro",
+    system_instruction=[
+        "あなたは旅行客をサポートするカスタマースタッフです。なるべく親切かつ丁寧に応対をしてください。",
+    ],
+    generation_config=GenerationConfig(
+        temperature=0.0,
+    ),
+)
 
 
 def generate_ai_response(query: str) -> str:
-    model = GenerativeModel(
-        "gemini-1.0-pro",
-        system_instruction=[
-            "あなたは旅行客をサポートするカスタマースタッフです。なるべく親切かつ丁寧に応対をしてください。",
-        ],
-        generation_config=GenerationConfig(
-            temperature=0.0,
-        ),
-    )
     response = model.generate_content(
         [query],
     )
