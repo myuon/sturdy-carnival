@@ -2,6 +2,7 @@ import queue
 import re
 import sys
 import os
+from typing import Callable
 import wave
 import io
 
@@ -38,15 +39,10 @@ def generate_ai_response(query: str) -> str:
     return response.text
 
 
-# Audio recording parameters
-RATE = 16000
-CHUNK = int(RATE / 10)  # 100ms
-
-
 class MicrophoneStream:
     """Opens a recording stream as a generator yielding the audio chunks."""
 
-    def __init__(self: object, rate: int = RATE, chunk: int = CHUNK) -> None:
+    def __init__(self: object, rate: int, chunk: int) -> None:
         """The audio -- and generator -- is guaranteed to be on the main thread."""
         self._rate = rate
         self._chunk = chunk
@@ -54,6 +50,11 @@ class MicrophoneStream:
         # Create a thread-safe buffer of audio data
         self._buff = queue.Queue()
         self.closed = True
+
+        self._ignore_input = False
+
+    def set_ignore_input(self: object, ignore: bool) -> None:
+        self._ignore_input = ignore
 
     def __enter__(self: object) -> object:
         self._audio_interface = pyaudio.PyAudio()
@@ -127,7 +128,9 @@ class MicrophoneStream:
             chunk = self._buff.get()
             if chunk is None:
                 return
-            data = [chunk]
+
+            if not self._ignore_input:
+                data = [chunk]
 
             # Now consume whatever other data's still buffered.
             while True:
@@ -135,14 +138,16 @@ class MicrophoneStream:
                     chunk = self._buff.get(block=False)
                     if chunk is None:
                         return
-                    data.append(chunk)
+
+                    if not self._ignore_input:
+                        data.append(chunk)
                 except queue.Empty:
                     break
 
             yield b"".join(data)
 
 
-def listen_print_loop(responses: object) -> str:
+def listen_print_loop(responses: object, tts: Callable[[str], None]) -> str:
     """Iterates through server responses and prints them.
 
     The responses passed is a generator that will block until a response
@@ -196,7 +201,7 @@ def listen_print_loop(responses: object) -> str:
 
             response = generate_ai_response(transcript + overwrite_chars)
             print("AI: " + response)
-            text_to_speech(response)
+            tts(response)
 
             # Exit recognition if any of the transcribed phrases could be
             # one of our keywords.
@@ -252,16 +257,19 @@ def text_to_speech(text: str) -> None:
 
 
 def main() -> None:
-    """Transcribe speech from audio file."""
+    rate = 16000
+    chunk = int(rate / 10)  # 100ms
+
     # See http://g.co/cloud/speech/docs/languages
     # for a list of supported languages.
-    language_code = "en-US"  # a BCP-47 language tag
+    language_code = "en-US"
 
     client = speech.SpeechClient(client_options={"api_key": API_KEY})
     config = speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=RATE,
+        sample_rate_hertz=rate,
         language_code=language_code,
+        alternative_language_codes=["ja-JP", "zh"],
     )
 
     streaming_config = speech.StreamingRecognitionConfig(
@@ -269,7 +277,12 @@ def main() -> None:
         interim_results=True,
     )
 
-    with MicrophoneStream(RATE, CHUNK) as stream:
+    def tts(response: str):
+        stream.set_ignore_input(True)
+        text_to_speech(response)
+        stream.set_ignore_input(False)
+
+    with MicrophoneStream(rate, chunk) as stream:
         audio_generator = stream.generator()
         requests = (
             speech.StreamingRecognizeRequest(audio_content=content)
@@ -279,7 +292,7 @@ def main() -> None:
         responses = client.streaming_recognize(streaming_config, requests)
 
         # Now, put the transcription responses to use.
-        listen_print_loop(responses)
+        listen_print_loop(responses, tts)
 
 
 if __name__ == "__main__":
