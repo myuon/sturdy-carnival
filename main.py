@@ -4,6 +4,7 @@ import sys
 import os
 
 from google.cloud import speech
+from google.cloud import texttospeech
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 
@@ -15,6 +16,8 @@ vertexai.init(
     project="default-364617",
     location="asia-northeast1",
 )
+
+tts_client = texttospeech.TextToSpeechClient()
 
 
 def generate_ai_response(query: str) -> str:
@@ -178,7 +181,10 @@ def listen_print_loop(responses: object) -> str:
 
         else:
             print("You: " + transcript + overwrite_chars)
-            print("AI: " + generate_ai_response(transcript + overwrite_chars))
+
+            response = generate_ai_response(transcript + overwrite_chars)
+            print("AI: " + response)
+            text_to_speech(response)
 
             # Exit recognition if any of the transcribed phrases could be
             # one of our keywords.
@@ -189,6 +195,41 @@ def listen_print_loop(responses: object) -> str:
             num_chars_printed = 0
 
     return transcript
+
+
+def text_to_speech(text: str) -> None:
+    """Synthesizes speech from the input string of text or ssml.
+    Make sure to be working in a virtual environment.
+
+    Note: ssml must be well-formed according to:
+        https://www.w3.org/TR/speech-synthesis/
+    """
+
+    # Set the text input to be synthesized
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+
+    # Build the voice request, select the language code ("en-US") and the ssml
+    # voice gender ("neutral")
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="en-US", ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+    )
+
+    # Select the type of audio file you want returned
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3
+    )
+
+    # Perform the text-to-speech request on the text input with the selected
+    # voice parameters and audio file type
+    response = tts_client.synthesize_speech(
+        input=synthesis_input, voice=voice, audio_config=audio_config
+    )
+
+    # The response's audio_content is binary.
+    with open("output.mp3", "wb") as out:
+        # Write the response to the output file.
+        out.write(response.audio_content)
+        print('Audio content written to file "output.mp3"')
 
 
 def main() -> None:
@@ -223,6 +264,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    text_to_speech("Hi there! I'm your chatbot AI. Let's have a conversation.")
+
     print(
         "=== CHATBOT AI ===\n",
         generate_ai_response("こんにちは、私とおしゃべりしましょう。"),
