@@ -8,7 +8,7 @@ import io
 from google.cloud import speech
 from google.cloud import texttospeech
 import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai.generative_models import GenerativeModel, GenerationConfig
 
 import pyaudio
 
@@ -23,8 +23,18 @@ tts_client = texttospeech.TextToSpeechClient()
 
 
 def generate_ai_response(query: str) -> str:
-    model = GenerativeModel("gemini-1.0-pro")
-    response = model.generate_content([query])
+    model = GenerativeModel(
+        "gemini-1.0-pro",
+        system_instruction=[
+            "あなたは旅行客をサポートするカスタマースタッフです。なるべく親切かつ丁寧に応対をしてください。",
+        ],
+        generation_config=GenerationConfig(
+            temperature=0.0,
+        ),
+    )
+    response = model.generate_content(
+        [query],
+    )
     return response.text
 
 
