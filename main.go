@@ -10,85 +10,7 @@ import (
 	speech "cloud.google.com/go/speech/apiv1"
 	"cloud.google.com/go/speech/apiv1/speechpb"
 	"github.com/gordonklaus/portaudio"
-	"github.com/zenwerk/go-wave"
 )
-
-type BufioCloser struct {
-	*bytes.Buffer
-}
-
-func (b BufioCloser) Close() error {
-	return nil
-}
-
-func ReadMic(writer io.WriteCloser) error {
-	// // form chunk
-	// _, err := f.WriteString("FORM")
-	// chk(err)
-	// chk(binary.Write(f, binary.BigEndian, int32(0))) //total bytes
-	// _, err = f.WriteString("AIFF")
-	// chk(err)
-
-	// // common chunk
-	// _, err = f.WriteString("COMM")
-	// chk(err)
-	// chk(binary.Write(f, binary.BigEndian, int32(18)))                  //size
-	// chk(binary.Write(f, binary.BigEndian, int16(1)))                   //channels
-	// chk(binary.Write(f, binary.BigEndian, int32(0)))                   //number of samples
-	// chk(binary.Write(f, binary.BigEndian, int16(32)))                  //bits per sample
-	// _, err = f.Write([]byte{0x40, 0x0e, 0xac, 0x44, 0, 0, 0, 0, 0, 0}) //80-bit sample rate 44100
-	// chk(err)
-
-	// // sound chunk
-	// _, err = f.WriteString("SSND")
-	// chk(err)
-	// chk(binary.Write(f, binary.BigEndian, int32(0))) //size
-	// chk(binary.Write(f, binary.BigEndian, int32(0))) //offset
-	// chk(binary.Write(f, binary.BigEndian, int32(0))) //block
-	// nSamples := 0
-	// defer func() {
-	// 	// fill in missing sizes
-	// 	totalBytes := 4 + 8 + 18 + 8 + 8 + 4*nSamples
-	// 	_, err = f.Seek(4, 0)
-	// 	chk(err)
-	// 	chk(binary.Write(f, binary.BigEndian, int32(totalBytes)))
-	// 	_, err = f.Seek(22, 0)
-	// 	chk(err)
-	// 	chk(binary.Write(f, binary.BigEndian, int32(nSamples)))
-	// 	_, err = f.Seek(42, 0)
-	// 	chk(err)
-	// 	chk(binary.Write(f, binary.BigEndian, int32(4*nSamples+8)))
-	// 	// chk(f.Close())
-	// }()
-	waveWriter, err := wave.NewWriter(wave.WriterParam{
-		Out:           writer,
-		Channel:       1,
-		SampleRate:    44100,
-		BitsPerSample: 8,
-	})
-	if err != nil {
-		return err
-	}
-
-	frame := make([]byte, 64)
-	stream, err := portaudio.OpenDefaultStream(1, 0, 44100, len(frame), frame)
-	chk(err)
-	defer stream.Close()
-
-	chk(stream.Start())
-
-	for {
-		chk(stream.Read())
-		if _, err := waveWriter.Write(frame); err != nil {
-			return err
-		}
-
-		log.Printf("Writing %x bytes", frame)
-	}
-	chk(stream.Stop())
-
-	return nil
-}
 
 func RunSpeechToText(f io.Reader) error {
 	ctx := context.Background()
@@ -107,7 +29,7 @@ func RunSpeechToText(f io.Reader) error {
 			StreamingConfig: &speechpb.StreamingRecognitionConfig{
 				Config: &speechpb.RecognitionConfig{
 					Encoding:        speechpb.RecognitionConfig_LINEAR16,
-					SampleRateHertz: 16000,
+					SampleRateHertz: 44100,
 					LanguageCode:    "en-US",
 				},
 				InterimResults: true,
@@ -168,21 +90,13 @@ func main() {
 	defer portaudio.Terminate()
 
 	bs := []byte{}
-	buffer := BufioCloser{Buffer: bytes.NewBuffer(bs)}
+	buffer := bytes.NewBuffer(bs)
 
-	go func() {
-		if err := ReadMic(buffer); err != nil {
-			log.Fatal(err)
-		}
-	}()
+	if err := RecordMicStream(buffer); err != nil {
+		log.Fatal(err)
+	}
 
 	if err := RunSpeechToText(buffer); err != nil {
 		log.Fatal(err)
-	}
-}
-
-func chk(err error) {
-	if err != nil {
-		panic(err)
 	}
 }

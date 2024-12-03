@@ -3,38 +3,27 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
+	"io"
 	"time"
 
 	"github.com/gordonklaus/portaudio"
 )
 
-func RecordMicStream() {
+func RecordMicStream(writer io.Writer) error {
 	recordSeconds := 5
 	sampleRate := 44100
 	numChannels := 1
 	framesPerBuffer := 64
 
-	// WAVファイルの作成
-	file, err := os.Create("output.wav")
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
 	// WAVファイルのヘッダーを書き込む
-	writeWavHeader(file, numChannels, sampleRate, 16, uint32(recordSeconds*sampleRate*numChannels*2))
-
-	// PortAudioの初期化
-	portaudio.Initialize()
-	defer portaudio.Terminate()
+	writeWavHeader(writer, numChannels, sampleRate, 16, uint32(recordSeconds*sampleRate*numChannels*2))
 
 	// 入力ストリームの作成
 	in := make([]int16, framesPerBuffer*numChannels)
 	stream, err := portaudio.OpenDefaultStream(numChannels, 0, float64(sampleRate), framesPerBuffer, func(inBuf, outBuf []int16) {
 		copy(in, inBuf)
 		// WAVファイルにデータを書き込む
-		binary.Write(file, binary.LittleEndian, in)
+		binary.Write(writer, binary.LittleEndian, in)
 	})
 	if err != nil {
 		panic(err)
@@ -53,17 +42,19 @@ func RecordMicStream() {
 		panic(err)
 	}
 	fmt.Println("録音完了")
+
+	return nil
 }
 
 // WAVファイルのヘッダーを書き込む関数
-func writeWavHeader(file *os.File, numChannels, sampleRate, bitsPerSample int, dataSize uint32) {
+func writeWavHeader(file io.Writer, numChannels, sampleRate, bitsPerSample int, dataSize uint32) {
 	// RIFFチャンク
-	file.WriteString("RIFF")
+	io.WriteString(file, "RIFF")
 	binary.Write(file, binary.LittleEndian, uint32(36+dataSize))
-	file.WriteString("WAVE")
+	io.WriteString(file, "WAVE")
 
 	// fmtチャンク
-	file.WriteString("fmt ")
+	io.WriteString(file, "fmt ")
 	binary.Write(file, binary.LittleEndian, uint32(16)) // fmtチャンクのサイズ
 	binary.Write(file, binary.LittleEndian, uint16(1))  // フォーマットID（リニアPCM）
 	binary.Write(file, binary.LittleEndian, uint16(numChannels))
@@ -75,6 +66,6 @@ func writeWavHeader(file *os.File, numChannels, sampleRate, bitsPerSample int, d
 	binary.Write(file, binary.LittleEndian, uint16(bitsPerSample))
 
 	// dataチャンク
-	file.WriteString("data")
+	io.WriteString(file, "data")
 	binary.Write(file, binary.LittleEndian, dataSize)
 }
