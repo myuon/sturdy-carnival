@@ -14,9 +14,12 @@ import (
 	"github.com/gordonklaus/portaudio"
 )
 
+var (
+	sampleRate = 44100
+)
+
 func RecordMicStream(writer io.Writer) error {
 	recordSeconds := 5
-	sampleRate := 44100
 	numChannels := 1
 	framesPerBuffer := 64
 
@@ -65,7 +68,7 @@ func RunSpeechToText(f io.Reader) error {
 			StreamingConfig: &speechpb.StreamingRecognitionConfig{
 				Config: &speechpb.RecognitionConfig{
 					Encoding:        speechpb.RecognitionConfig_LINEAR16,
-					SampleRateHertz: 44100,
+					SampleRateHertz: int32(sampleRate),
 					LanguageCode:    "en-US",
 				},
 				InterimResults: true,
