@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"time"
 
 	speech "cloud.google.com/go/speech/apiv1"
@@ -53,7 +52,7 @@ func RecordMicStream(writer io.Writer) error {
 	return nil
 }
 
-func RunSpeechToText(f io.Reader) error {
+func RunSpeechToText(f io.Reader) (string, error) {
 	ctx := context.Background()
 
 	client, err := speech.NewClient(ctx)
@@ -107,6 +106,8 @@ func RunSpeechToText(f io.Reader) error {
 		}
 	}()
 
+	transcript := ""
+
 	for {
 		resp, err := stream.Recv()
 		if err == io.EOF {
@@ -121,21 +122,51 @@ func RunSpeechToText(f io.Reader) error {
 		}
 		for _, result := range resp.Results {
 			fmt.Printf("Result: %+v\n", result)
+			transcript = result.Alternatives[0].Transcript
 		}
 	}
-	return nil
+
+	return transcript, nil
 }
 
-func TryGemini(w io.Writer, projectId string, region string, modelName string) (string, error) {
-	ctx := context.Background()
-	client, err := genai.NewClient(ctx, projectId, region)
+type App struct {
+	aiClient    *genai.Client
+	geminiModel *genai.GenerativeModel
+}
+
+func (app *App) Init() error {
+	if err := portaudio.Initialize(); err != nil {
+		return err
+	}
+
+	projectId := "default-364617"
+	region := "asia-northeast1"
+	modelName := "gemini-1.0-pro"
+	client, err := genai.NewClient(context.Background(), projectId, region)
 	if err != nil {
-		return "", fmt.Errorf("error creating client: %w", err)
+		return fmt.Errorf("error creating client: %w", err)
 	}
 	gemini := client.GenerativeModel(modelName)
 
-	prompt := genai.Text("こんにちは、私とお話ししませんか？")
-	resp, err := gemini.GenerateContent(ctx, prompt)
+	app.geminiModel = gemini
+	app.aiClient = client
+
+	return nil
+}
+
+func (app *App) Close() error {
+	if err := portaudio.Terminate(); err != nil {
+		return err
+	}
+
+	app.aiClient.Close()
+
+	return nil
+}
+
+func (app *App) GetGeminiResponse(query string) (string, error) {
+	prompt := genai.Text(query)
+	resp, err := app.geminiModel.GenerateContent(context.Background(), prompt)
 	if err != nil {
 		return "", fmt.Errorf("error generating content: %w", err)
 	}
@@ -146,19 +177,34 @@ func TryGemini(w io.Writer, projectId string, region string, modelName string) (
 }
 
 func main() {
-	portaudio.Initialize()
-	defer portaudio.Terminate()
+	app := App{}
 
-	TryGemini(os.Stdout, "default-364617", "asia-northeast1", "gemini-1.0-pro")
+	if err := app.Init(); err != nil {
+		log.Fatal(err)
+	}
+	defer app.Close()
 
 	bs := []byte{}
 	buffer := bytes.NewBuffer(bs)
 
-	if err := RecordMicStream(buffer); err != nil {
-		log.Fatal(err)
-	}
+	for {
+		if err := RecordMicStream(buffer); err != nil {
+			log.Fatal(err)
+		}
 
-	if err := RunSpeechToText(buffer); err != nil {
-		log.Fatal(err)
+		transcript, err := RunSpeechToText(buffer)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		log.Printf("You: %s", transcript)
+
+		resp, err := app.GetGeminiResponse(transcript)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("AI: %v", resp)
+
+		time.Sleep(1 * time.Second)
 	}
 }
