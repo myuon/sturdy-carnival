@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"time"
 
 	speech "cloud.google.com/go/speech/apiv1"
 	"cloud.google.com/go/speech/apiv1/speechpb"
+	"cloud.google.com/go/vertexai/genai"
 	"github.com/gordonklaus/portaudio"
 )
 
@@ -124,9 +126,30 @@ func RunSpeechToText(f io.Reader) error {
 	return nil
 }
 
+func TryGemini(w io.Writer, projectId string, region string, modelName string) (string, error) {
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, projectId, region)
+	if err != nil {
+		return "", fmt.Errorf("error creating client: %w", err)
+	}
+	gemini := client.GenerativeModel(modelName)
+
+	prompt := genai.Text("こんにちは、私とお話ししませんか？")
+	resp, err := gemini.GenerateContent(ctx, prompt)
+	if err != nil {
+		return "", fmt.Errorf("error generating content: %w", err)
+	}
+
+	text := resp.Candidates[0].Content.Parts[0].(genai.Text)
+
+	return string(text), nil
+}
+
 func main() {
 	portaudio.Initialize()
 	defer portaudio.Terminate()
+
+	TryGemini(os.Stdout, "default-364617", "asia-northeast1", "gemini-1.0-pro")
 
 	bs := []byte{}
 	buffer := bytes.NewBuffer(bs)
