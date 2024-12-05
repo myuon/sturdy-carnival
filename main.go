@@ -11,6 +11,8 @@ import (
 
 	speech "cloud.google.com/go/speech/apiv1"
 	"cloud.google.com/go/speech/apiv1/speechpb"
+	texttospeech "cloud.google.com/go/texttospeech/apiv1"
+	"cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
 	"cloud.google.com/go/vertexai/genai"
 	"github.com/gordonklaus/portaudio"
 )
@@ -132,6 +134,7 @@ func RunSpeechToText(f io.Reader) (string, error) {
 type App struct {
 	aiClient    *genai.Client
 	geminiModel *genai.GenerativeModel
+	ttsClient   *texttospeech.Client
 }
 
 func (app *App) Init() error {
@@ -151,6 +154,13 @@ func (app *App) Init() error {
 	app.geminiModel = gemini
 	app.aiClient = client
 
+	ttsClient, err := texttospeech.NewClient(context.Background())
+	if err != nil {
+		return fmt.Errorf("error creating text-to-speech client: %w", err)
+	}
+
+	app.ttsClient = ttsClient
+
 	return nil
 }
 
@@ -160,6 +170,7 @@ func (app *App) Close() error {
 	}
 
 	app.aiClient.Close()
+	app.ttsClient.Close()
 
 	return nil
 }
@@ -174,6 +185,95 @@ func (app *App) GetGeminiResponse(query string) (string, error) {
 	text := resp.Candidates[0].Content.Parts[0].(genai.Text)
 
 	return string(text), nil
+}
+
+func (app *App) RunTextToSpeech(text string) error {
+	req := &texttospeechpb.SynthesizeSpeechRequest{
+		Input: &texttospeechpb.SynthesisInput{
+			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
+		},
+		Voice: &texttospeechpb.VoiceSelectionParams{
+			LanguageCode: "en-US",
+			SsmlGender:   texttospeechpb.SsmlVoiceGender_NEUTRAL,
+		},
+		AudioConfig: &texttospeechpb.AudioConfig{
+			AudioEncoding: texttospeechpb.AudioEncoding_LINEAR16,
+		},
+	}
+
+	resp, err := app.ttsClient.SynthesizeSpeech(context.Background(), req)
+	if err != nil {
+		return fmt.Errorf("error synthesizing speech: %w", err)
+	}
+
+	contentBuffer := bytes.NewBuffer(resp.AudioContent)
+
+	// WAVヘッダーを読み取る
+	var header [44]byte
+	if _, err := io.ReadFull(contentBuffer, header[:]); err != nil {
+		log.Fatalf("ヘッダーの読み取りに失敗しました: %v", err)
+	}
+
+	// サンプルレートを取得（リトルエンディアンで読み取る）
+	sampleRate := binary.LittleEndian.Uint32(header[24:28])
+
+	// チャンネル数を取得
+	channels := binary.LittleEndian.Uint16(header[22:24])
+
+	// オーディオデータのサイズを取得
+	dataSize := binary.LittleEndian.Uint32(header[40:44])
+
+	// オーディオデータを読み取る
+	audioData := make([]byte, dataSize)
+	if _, err := io.ReadFull(contentBuffer, audioData); err != nil {
+		log.Fatalf("オーディオデータの読み取りに失敗しました: %v", err)
+	}
+
+	int16Data := make([]int16, len(resp.AudioContent)/2)
+	if err := binary.Read(bytes.NewReader(resp.AudioContent), binary.LittleEndian, &int16Data); err != nil {
+		log.Fatalf("バイトデータの読み取りに失敗しました: %v", err)
+	}
+
+	outDevice, err := portaudio.DefaultOutputDevice()
+	if err != nil {
+		log.Fatalf("デフォルトの出力デバイスの取得に失敗しました: %v", err)
+	}
+
+	// ストリームのパラメータを設定
+	out := portaudio.StreamDeviceParameters{
+		Device:   outDevice,
+		Channels: int(channels),
+		Latency:  outDevice.DefaultLowOutputLatency,
+	}
+
+	// ストリームを開く
+	stream, err := portaudio.OpenStream(portaudio.StreamParameters{
+		Output:          out,
+		SampleRate:      float64(sampleRate),
+		FramesPerBuffer: len(int16Data),
+	}, func(out []int16) {
+		copy(out, int16Data)
+	})
+	if err != nil {
+		log.Fatalf("ストリームのオープンに失敗しました: %v", err)
+	}
+	defer stream.Close()
+
+	// ストリームを開始
+	err = stream.Start()
+	if err != nil {
+		log.Fatalf("ストリームの開始に失敗しました: %v", err)
+	}
+
+	time.Sleep(5 * time.Second)
+
+	// ストリームを停止
+	err = stream.Stop()
+	if err != nil {
+		log.Fatalf("ストリームの停止に失敗しました: %v", err)
+	}
+
+	return nil
 }
 
 func main() {
@@ -204,6 +304,10 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("AI: %v", resp)
+
+		if err := app.RunTextToSpeech(resp); err != nil {
+			log.Fatal(err)
+		}
 
 		time.Sleep(1 * time.Second)
 	}
