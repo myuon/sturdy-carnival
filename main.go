@@ -24,9 +24,10 @@ var (
 )
 
 func RecordMicStream(writer io.Writer) error {
-	recordSeconds := 5
 	numChannels := 1
 	framesPerBuffer := 64
+	noSpeechDuration := 3500 * time.Millisecond
+	lastSpeechTime := time.Now()
 
 	// 入力ストリームの作成
 	in := make([]int16, framesPerBuffer*numChannels)
@@ -34,9 +35,14 @@ func RecordMicStream(writer io.Writer) error {
 		copy(in, inBuf)
 		// WAVファイルにデータを書き込む
 		binary.Write(writer, binary.LittleEndian, in)
+
+		// Check if there is sound input
+		if isSpeech(in) {
+			lastSpeechTime = time.Now()
+		}
 	})
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer stream.Close()
 
@@ -46,7 +52,14 @@ func RecordMicStream(writer io.Writer) error {
 		panic(err)
 	}
 	fmt.Println("録音中...")
-	time.Sleep(time.Duration(recordSeconds) * time.Second)
+
+	for {
+		if time.Since(lastSpeechTime) > noSpeechDuration {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	err = stream.Stop()
 	if err != nil {
 		panic(err)
@@ -54,6 +67,16 @@ func RecordMicStream(writer io.Writer) error {
 	fmt.Println("録音完了")
 
 	return nil
+}
+
+func isSpeech(samples []int16) bool {
+	threshold := int16(1000)
+	for _, sample := range samples {
+		if sample > threshold || sample < -threshold {
+			return true
+		}
+	}
+	return false
 }
 
 func RunSpeechToText(f io.Reader) (string, error) {
