@@ -208,30 +208,13 @@ func (app *App) RunTextToSpeech(text string) error {
 
 	contentBuffer := bytes.NewBuffer(resp.AudioContent)
 
-	// WAVヘッダーを読み取る
-	var header [44]byte
-	if _, err := io.ReadFull(contentBuffer, header[:]); err != nil {
-		log.Fatalf("ヘッダーの読み取りに失敗しました: %v", err)
+	header, err := ReadWavHeader(contentBuffer)
+	if err != nil {
+		return err
 	}
 
-	// サンプルレートを取得（リトルエンディアンで読み取る）
-	sampleRate := binary.LittleEndian.Uint32(header[24:28])
-
-	// チャンネル数を取得
-	channels := binary.LittleEndian.Uint16(header[22:24])
-
-	// ビット深度を取得
-	bitsPerSample := binary.LittleEndian.Uint16(header[34:36])
-
-	// オーディオデータのサイズを取得
-	dataSize := binary.LittleEndian.Uint32(header[40:44])
-
-	bytesPerSample := bitsPerSample / 8
-	bytesPerSecond := uint32(channels) * sampleRate * uint32(bytesPerSample)
-	durationSeconds := float64(dataSize) / float64(bytesPerSecond)
-
 	// オーディオデータを読み取る
-	audioData := make([]byte, dataSize)
+	audioData := make([]byte, header.DataSize)
 	if _, err := io.ReadFull(contentBuffer, audioData); err != nil {
 		log.Fatalf("オーディオデータの読み取りに失敗しました: %v", err)
 	}
@@ -249,14 +232,14 @@ func (app *App) RunTextToSpeech(text string) error {
 	// ストリームのパラメータを設定
 	out := portaudio.StreamDeviceParameters{
 		Device:   outDevice,
-		Channels: int(channels),
+		Channels: int(header.Channels),
 		Latency:  outDevice.DefaultLowOutputLatency,
 	}
 
 	// ストリームを開く
 	stream, err := portaudio.OpenStream(portaudio.StreamParameters{
 		Output:          out,
-		SampleRate:      float64(sampleRate),
+		SampleRate:      float64(header.SampleRate),
 		FramesPerBuffer: len(int16Data),
 	}, func(out []int16) {
 		copy(out, int16Data)
@@ -272,7 +255,7 @@ func (app *App) RunTextToSpeech(text string) error {
 		log.Fatalf("ストリームの開始に失敗しました: %v", err)
 	}
 
-	time.Sleep(time.Duration(durationSeconds) * time.Second)
+	time.Sleep(time.Duration(header.DurationSeconds()) * time.Second)
 
 	// ストリームを停止
 	err = stream.Stop()
