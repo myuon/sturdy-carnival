@@ -9,6 +9,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/myuon/voicebot-ai-cli/voicebot"
+
 	speech "cloud.google.com/go/speech/apiv1"
 	"cloud.google.com/go/speech/apiv1/speechpb"
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
@@ -208,7 +210,7 @@ func (app *App) RunTextToSpeech(text string) error {
 
 	contentBuffer := bytes.NewBuffer(resp.AudioContent)
 
-	header, err := ReadWavHeader(contentBuffer)
+	header, err := voicebot.ReadWavHeader(contentBuffer)
 	if err != nil {
 		return err
 	}

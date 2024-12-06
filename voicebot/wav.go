@@ -1,4 +1,4 @@
-package main
+package voicebot
 
 import (
 	"encoding/binary"
