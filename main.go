@@ -179,6 +179,8 @@ func (app *App) Init() error {
 		return fmt.Errorf("error creating client: %w", err)
 	}
 	gemini := client.GenerativeModel(modelName)
+	gemini.SetTemperature(0)
+	gemini.SystemInstruction = genai.NewUserContent(genai.Text(`You are a customer staff to support guests who are traveling in Japan. Please respond as politely as possible. Also, be sure to respond in the same language as the input.`))
 
 	app.geminiModel = gemini
 	app.aiClient = client
