@@ -26,7 +26,7 @@ var (
 func RecordMicStream(writer io.Writer) error {
 	numChannels := 1
 	framesPerBuffer := 64
-	noSpeechDuration := 3500 * time.Millisecond
+	noSpeechDuration := 2500 * time.Millisecond
 	lastSpeechTime := time.Now()
 
 	// 入力ストリームの作成
@@ -79,7 +79,7 @@ func isSpeech(samples []int16) bool {
 	return false
 }
 
-func RunSpeechToText(f io.Reader) (string, error) {
+func RunSpeechToText(f io.Reader) (string, string, error) {
 	ctx := context.Background()
 
 	client, err := speech.NewClient(ctx)
@@ -98,6 +98,9 @@ func RunSpeechToText(f io.Reader) (string, error) {
 					Encoding:        speechpb.RecognitionConfig_LINEAR16,
 					SampleRateHertz: int32(sampleRate),
 					LanguageCode:    "en-US",
+					AlternativeLanguageCodes: []string{
+						"ja-JP",
+					},
 				},
 				InterimResults: true,
 			},
@@ -134,6 +137,7 @@ func RunSpeechToText(f io.Reader) (string, error) {
 	}()
 
 	transcript := ""
+	langCode := ""
 
 	for {
 		resp, err := stream.Recv()
@@ -148,12 +152,12 @@ func RunSpeechToText(f io.Reader) (string, error) {
 			log.Fatalf("Could not recognize: %v", err)
 		}
 		for _, result := range resp.Results {
-			fmt.Printf("Result: %+v\n", result)
+			langCode = result.LanguageCode
 			transcript = result.Alternatives[0].Transcript
 		}
 	}
 
-	return transcript, nil
+	return langCode, transcript, nil
 }
 
 type App struct {
@@ -212,13 +216,13 @@ func (app *App) GetGeminiResponse(query string) (string, error) {
 	return string(text), nil
 }
 
-func (app *App) RunTextToSpeech(text string) error {
+func (app *App) RunTextToSpeech(langCode string, text string) error {
 	req := &texttospeechpb.SynthesizeSpeechRequest{
 		Input: &texttospeechpb.SynthesisInput{
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
 		},
 		Voice: &texttospeechpb.VoiceSelectionParams{
-			LanguageCode: "en-US",
+			LanguageCode: langCode,
 			SsmlGender:   texttospeechpb.SsmlVoiceGender_NEUTRAL,
 		},
 		AudioConfig: &texttospeechpb.AudioConfig{
@@ -307,7 +311,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		transcript, err := RunSpeechToText(buffer)
+		langCode, transcript, err := RunSpeechToText(buffer)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -320,7 +324,7 @@ func main() {
 		}
 		log.Printf("AI: %v", resp)
 
-		if err := app.RunTextToSpeech(resp); err != nil {
+		if err := app.RunTextToSpeech(langCode, resp); err != nil {
 			log.Fatal(err)
 		}
 
