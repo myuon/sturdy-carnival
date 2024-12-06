@@ -220,8 +220,15 @@ func (app *App) RunTextToSpeech(text string) error {
 	// チャンネル数を取得
 	channels := binary.LittleEndian.Uint16(header[22:24])
 
+	// ビット深度を取得
+	bitsPerSample := binary.LittleEndian.Uint16(header[34:36])
+
 	// オーディオデータのサイズを取得
 	dataSize := binary.LittleEndian.Uint32(header[40:44])
+
+	bytesPerSample := bitsPerSample / 8
+	bytesPerSecond := uint32(channels) * sampleRate * uint32(bytesPerSample)
+	durationSeconds := float64(dataSize) / float64(bytesPerSecond)
 
 	// オーディオデータを読み取る
 	audioData := make([]byte, dataSize)
@@ -265,7 +272,7 @@ func (app *App) RunTextToSpeech(text string) error {
 		log.Fatalf("ストリームの開始に失敗しました: %v", err)
 	}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(time.Duration(durationSeconds) * time.Second)
 
 	// ストリームを停止
 	err = stream.Stop()
