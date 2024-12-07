@@ -26,7 +26,7 @@ var (
 func RecordMicStream(writer io.Writer) error {
 	numChannels := 1
 	framesPerBuffer := 64
-	noSpeechDuration := 2500 * time.Millisecond
+	noSpeechDuration := 1500 * time.Millisecond
 	lastSpeechTime := time.Now()
 
 	// 入力ストリームの作成
@@ -101,7 +101,7 @@ func (app *App) Init() error {
 	}
 	gemini := client.GenerativeModel(modelName)
 	gemini.SetTemperature(0)
-	gemini.SystemInstruction = genai.NewUserContent(genai.Text(`You are a customer staff to support guests who are traveling in Japan. Please respond as politely as possible. Also, be sure to respond in the same language as the input.`))
+	gemini.SystemInstruction = genai.NewUserContent(genai.Text(`You are a customer staff to support guests who are traveling in Japan. Please respond as politely as possible. Also, be sure to respond in the same language as the input. Response should be short and concise.`))
 
 	app.geminiModel = gemini
 	app.aiClient = client
@@ -308,13 +308,15 @@ func main() {
 	}
 	defer app.Close()
 
-	reader, writer := io.Pipe()
-
 	for {
-		go func(writer io.Writer) {
+		reader, writer := io.Pipe()
+
+		go func(writer io.WriteCloser) {
 			if err := RecordMicStream(writer); err != nil {
 				log.Fatal(err)
 			}
+
+			writer.Close()
 		}(writer)
 
 		langCode, transcript, err := app.RunSpeechToText(reader)
