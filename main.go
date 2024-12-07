@@ -33,6 +33,7 @@ func RecordMicStream(writer io.Writer) error {
 	in := make([]int16, framesPerBuffer*numChannels)
 	stream, err := portaudio.OpenDefaultStream(numChannels, 0, float64(sampleRate), framesPerBuffer, func(inBuf, outBuf []int16) {
 		copy(in, inBuf)
+
 		// WAVファイルにデータを書き込む
 		binary.Write(writer, binary.LittleEndian, in)
 
@@ -79,91 +80,11 @@ func isSpeech(samples []int16) bool {
 	return false
 }
 
-func RunSpeechToText(f io.Reader) (string, string, error) {
-	ctx := context.Background()
-
-	client, err := speech.NewClient(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	stream, err := client.StreamingRecognize(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	// Send the initial configuration message.
-	if err := stream.Send(&speechpb.StreamingRecognizeRequest{
-		StreamingRequest: &speechpb.StreamingRecognizeRequest_StreamingConfig{
-			StreamingConfig: &speechpb.StreamingRecognitionConfig{
-				Config: &speechpb.RecognitionConfig{
-					Encoding:        speechpb.RecognitionConfig_LINEAR16,
-					SampleRateHertz: int32(sampleRate),
-					LanguageCode:    "en-US",
-					AlternativeLanguageCodes: []string{
-						"ja-JP",
-					},
-				},
-				InterimResults: true,
-			},
-		},
-	}); err != nil {
-		log.Fatal(err)
-	}
-
-	go func() {
-		buf := make([]byte, 1024)
-		for {
-			n, err := f.Read(buf)
-			if n > 0 {
-				if err := stream.Send(&speechpb.StreamingRecognizeRequest{
-					StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{
-						AudioContent: buf[:n],
-					},
-				}); err != nil {
-					log.Printf("Could not send audio: %v", err)
-				}
-			}
-			if err == io.EOF {
-				// Nothing else to pipe, close the stream.
-				if err := stream.CloseSend(); err != nil {
-					log.Fatalf("Could not close stream: %v", err)
-				}
-				return
-			}
-			if err != nil {
-				log.Printf("Could not read from %v", err)
-				continue
-			}
-		}
-	}()
-
-	transcript := ""
-	langCode := ""
-
-	for {
-		resp, err := stream.Recv()
-		if err == io.EOF {
-			log.Printf("End of stream")
-			break
-		}
-		if err != nil {
-			log.Fatalf("Cannot stream results: %v", err)
-		}
-		if err := resp.Error; err != nil {
-			log.Fatalf("Could not recognize: %v", err)
-		}
-		for _, result := range resp.Results {
-			langCode = result.LanguageCode
-			transcript = result.Alternatives[0].Transcript
-		}
-	}
-
-	return langCode, transcript, nil
-}
-
 type App struct {
-	aiClient    *genai.Client
-	geminiModel *genai.GenerativeModel
-	ttsClient   *texttospeech.Client
+	aiClient     *genai.Client
+	geminiModel  *genai.GenerativeModel
+	ttsClient    *texttospeech.Client
+	speechClient *speech.Client
 }
 
 func (app *App) Init() error {
@@ -191,6 +112,13 @@ func (app *App) Init() error {
 	}
 
 	app.ttsClient = ttsClient
+
+	speechClient, err := speech.NewClient(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	app.speechClient = speechClient
 
 	return nil
 }
@@ -297,6 +225,81 @@ func (app *App) RunTextToSpeech(langCode string, text string) error {
 	return nil
 }
 
+func (app *App) RunSpeechToText(f io.Reader) (string, string, error) {
+	stream, err := app.speechClient.StreamingRecognize(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Send the initial configuration message.
+	if err := stream.Send(&speechpb.StreamingRecognizeRequest{
+		StreamingRequest: &speechpb.StreamingRecognizeRequest_StreamingConfig{
+			StreamingConfig: &speechpb.StreamingRecognitionConfig{
+				Config: &speechpb.RecognitionConfig{
+					Encoding:        speechpb.RecognitionConfig_LINEAR16,
+					SampleRateHertz: int32(sampleRate),
+					LanguageCode:    "en-US",
+					AlternativeLanguageCodes: []string{
+						"ja-JP",
+					},
+				},
+				InterimResults: true,
+			},
+		},
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := f.Read(buf)
+			if n > 0 {
+				if err := stream.Send(&speechpb.StreamingRecognizeRequest{
+					StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{
+						AudioContent: buf[:n],
+					},
+				}); err != nil {
+					log.Printf("Could not send audio: %v", err)
+				}
+			}
+			if err == io.EOF {
+				// Nothing else to pipe, close the stream.
+				if err := stream.CloseSend(); err != nil {
+					log.Fatalf("Could not close stream: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				log.Printf("Could not read from %v", err)
+				continue
+			}
+		}
+	}()
+
+	transcript := ""
+	langCode := ""
+
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			log.Printf("End of stream")
+			break
+		}
+		if err != nil {
+			log.Fatalf("Cannot stream results: %v", err)
+		}
+		if err := resp.Error; err != nil {
+			log.Fatalf("Could not recognize: %v", err)
+		}
+		for _, result := range resp.Results {
+			langCode = result.LanguageCode
+			transcript = result.Alternatives[0].Transcript
+		}
+	}
+
+	return langCode, transcript, nil
+}
+
 func main() {
 	app := App{}
 
@@ -305,15 +308,16 @@ func main() {
 	}
 	defer app.Close()
 
-	bs := []byte{}
-	buffer := bytes.NewBuffer(bs)
+	reader, writer := io.Pipe()
 
 	for {
-		if err := RecordMicStream(buffer); err != nil {
-			log.Fatal(err)
-		}
+		go func(writer io.Writer) {
+			if err := RecordMicStream(writer); err != nil {
+				log.Fatal(err)
+			}
+		}(writer)
 
-		langCode, transcript, err := RunSpeechToText(buffer)
+		langCode, transcript, err := app.RunSpeechToText(reader)
 		if err != nil {
 			log.Fatal(err)
 		}
