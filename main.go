@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -101,12 +102,17 @@ func (app *App) Init() error {
 	}
 	gemini := client.GenerativeModel(modelName)
 	gemini.SetTemperature(0)
-	gemini.SystemInstruction = genai.NewUserContent(genai.Text(`You are a customer staff to support guests who are traveling in Japan. Please respond as politely as possible. Also, be sure to respond in the same language as the input. Response should be short and concise.`))
+	gemini.SystemInstruction = genai.NewUserContent(genai.Text(`You are a customer staff to support guests who are traveling in Japan.
+Keep the following in mind when responding to guests:
+- Response should be short and concise.
+- Response shoudl be in the same language as the input.
+- If you don't know the answer, please ask for the staff (use AskForStaff tool) for help.
+`))
 
 	lockTool := &genai.Tool{
 		FunctionDeclarations: []*genai.FunctionDeclaration{{
 			Name:        "GetDoorLockNumber",
-			Description: "Get the number of the door lock by the reservation code.",
+			Description: "Get the number of the door lock by the reservation code. If the guest forgets the number, please use this tool.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -117,7 +123,31 @@ func (app *App) Init() error {
 				},
 				Required: []string{"reservationCode"},
 			},
-		}},
+		},
+			{
+				Name:        "AskForStaff",
+				Description: "Ask for the staff for help. If you don't know the answer, please use this tool.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"reservationCode": {
+							Type:        genai.TypeString,
+							Description: "The reservation code of the guest.",
+						},
+						"message": {
+							Type:        genai.TypeString,
+							Description: "The message to ask for the staff.",
+						},
+						"callType": {
+							Type:        genai.TypeString,
+							Description: "The type of the call.",
+							Enum:        []string{"trouble_in_stay", "not_enough_information", "emergency"},
+						},
+					},
+					Required: []string{"message", "callType"},
+				},
+			},
+		},
 	}
 
 	gemini.Tools = []*genai.Tool{lockTool}
@@ -349,12 +379,18 @@ func main() {
 			log.Fatal(err)
 		}
 
-		log.Printf("You: %s", transcript)
+		log.Printf("You: %v", transcript)
+		if len(transcript) == 0 {
+			continue
+		}
 
 		resp, err := chat.SendMessage(context.Background(), genai.Text(transcript))
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		respBs, _ := json.Marshal(&resp)
+		log.Printf("[DEBUG] Response: %v", string(respBs))
 
 		part := resp.Candidates[0].Content.Parts[0]
 		switch part := part.(type) {
@@ -369,7 +405,7 @@ func main() {
 			switch part.Name {
 			case "GetDoorLockNumber":
 				reservationCode := part.Args["reservationCode"].(string)
-				lockNumber := "1234"
+				lockNumber := "4819"
 
 				log.Printf("[FunctionCall] GetDoorLockNumber: %v -> %v", reservationCode, lockNumber)
 
@@ -389,7 +425,38 @@ func main() {
 				if err := app.RunTextToSpeech(langCode, string(content)); err != nil {
 					log.Fatal(err)
 				}
+			case "AskForStaff":
+				reservationCode := part.Args["reservationCode"].(string)
+				message := part.Args["message"].(string)
+				callType := part.Args["callType"].(string)
+
+				log.Printf("[FunctionCall] AskForStaff: %v, %v, %v", reservationCode, message, callType)
+
+				log.Print("YOU>")
+				response := ""
+				if _, err := fmt.Scanln(&response); err != nil {
+					log.Fatal(err)
+				}
+
+				resp, err := chat.SendMessage(context.Background(), genai.FunctionResponse{
+					Name: "AskForStaff",
+					Response: map[string]any{
+						"response": response,
+					},
+				})
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				content := resp.Candidates[0].Content.Parts[0].(genai.Text)
+
+				log.Printf("AI: %v", content)
+				if err := app.RunTextToSpeech(langCode, string(content)); err != nil {
+					log.Fatal(err)
+				}
 			}
+		default:
+			log.Printf("Unknown part: %v", part)
 		}
 	}
 }
