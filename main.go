@@ -95,7 +95,7 @@ func (app *App) Init() error {
 
 	projectId := "default-364617"
 	region := "asia-northeast1"
-	modelName := "gemini-1.0-pro"
+	modelName := "gemini-1.5-pro"
 	client, err := genai.NewClient(context.Background(), projectId, region)
 	if err != nil {
 		return fmt.Errorf("error creating client: %w", err)
