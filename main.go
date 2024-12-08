@@ -103,6 +103,25 @@ func (app *App) Init() error {
 	gemini.SetTemperature(0)
 	gemini.SystemInstruction = genai.NewUserContent(genai.Text(`You are a customer staff to support guests who are traveling in Japan. Please respond as politely as possible. Also, be sure to respond in the same language as the input. Response should be short and concise.`))
 
+	lockTool := &genai.Tool{
+		FunctionDeclarations: []*genai.FunctionDeclaration{{
+			Name:        "GetDoorLockNumber",
+			Description: "Get the number of the door lock by the reservation code.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"reservationCode": {
+						Type:        genai.TypeString,
+						Description: "The reservation code of the guest.",
+					},
+				},
+				Required: []string{"reservationCode"},
+			},
+		}},
+	}
+
+	gemini.Tools = []*genai.Tool{lockTool}
+
 	app.geminiModel = gemini
 	app.aiClient = client
 
@@ -300,6 +319,10 @@ func (app *App) RunSpeechToText(f io.Reader) (string, string, error) {
 	return langCode, transcript, nil
 }
 
+func (app *App) StartChat() *genai.ChatSession {
+	return app.geminiModel.StartChat()
+}
+
 func main() {
 	app := App{}
 
@@ -307,6 +330,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer app.Close()
+
+	chat := app.StartChat()
 
 	for {
 		reader, writer := io.Pipe()
@@ -326,16 +351,45 @@ func main() {
 
 		log.Printf("You: %s", transcript)
 
-		resp, err := app.GetGeminiResponse(transcript)
+		resp, err := chat.SendMessage(context.Background(), genai.Text(transcript))
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("AI: %v", resp)
 
-		if err := app.RunTextToSpeech(langCode, resp); err != nil {
-			log.Fatal(err)
+		part := resp.Candidates[0].Content.Parts[0]
+		switch part := part.(type) {
+		case genai.Text:
+			content := string(part)
+			log.Printf("AI: %s", content)
+
+			if err := app.RunTextToSpeech(langCode, string(content)); err != nil {
+				log.Fatal(err)
+			}
+		case genai.FunctionCall:
+			switch part.Name {
+			case "GetDoorLockNumber":
+				reservationCode := part.Args["reservationCode"].(string)
+				lockNumber := "1234"
+
+				log.Printf("[FunctionCall] GetDoorLockNumber: %v -> %v", reservationCode, lockNumber)
+
+				resp, err := chat.SendMessage(context.Background(), genai.FunctionResponse{
+					Name: "GetDoorLockNumber",
+					Response: map[string]any{
+						"lockNumber": lockNumber,
+					},
+				})
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				content := resp.Candidates[0].Content.Parts[0].(genai.Text)
+
+				log.Printf("AI: %v", content)
+				if err := app.RunTextToSpeech(langCode, string(content)); err != nil {
+					log.Fatal(err)
+				}
+			}
 		}
-
-		time.Sleep(1 * time.Second)
 	}
 }
