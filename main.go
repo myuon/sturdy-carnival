@@ -30,7 +30,7 @@ var (
 func RecordMicStream(writer io.Writer) error {
 	numChannels := 1
 	framesPerBuffer := 64
-	noSpeechDuration := 1500 * time.Millisecond
+	noSpeechDuration := 1800 * time.Millisecond
 	lastSpeechTime := time.Now()
 
 	// 入力ストリームの作成
@@ -270,7 +270,8 @@ func (app *App) RunTextToSpeech(langCode string, text string) error {
 		log.Fatalf("ストリームの開始に失敗しました: %v", err)
 	}
 
-	time.Sleep(time.Duration(header.DurationSeconds()) * time.Second)
+	// 音声が途切れる瞬間がたまにあるので、再生時間を少し長くする
+	time.Sleep(time.Duration(header.DurationSeconds()+0.3) * time.Second)
 
 	// ストリームを停止
 	err = stream.Stop()
