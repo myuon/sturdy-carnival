@@ -113,7 +113,7 @@ func (app *App) Init() error {
 Keep the following in mind when responding to guests:
 - Response should be short and concise.
 - Response shoudl be in the same language as the input.
-- If you don't know the answer, please ask for the staff (use AskForStaff tool) for help.
+- If you don't know the answer, please ask for the staff (use AskForStaff tool) for help. Escpecially when the guest ask for the request about the reservation fee, or in emergency situations.
 `))
 
 	lockTool := &genai.Tool{
@@ -366,6 +366,8 @@ func main() {
 		log.Fatal("Error loading .env.local file")
 	}
 
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
 	app := App{}
 
 	if err := app.Init(); err != nil {
@@ -404,7 +406,7 @@ func main() {
 		}
 
 		respBs, _ := json.Marshal(&resp)
-		log.Printf("[DEBUG] Response: %v", string(respBs))
+		slog.Debug(string(respBs))
 
 		part := resp.Candidates[0].Content.Parts[0]
 		switch part := part.(type) {
