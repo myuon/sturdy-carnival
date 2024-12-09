@@ -10,6 +10,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/myuon/voicebot-ai-cli/voicebot"
+
 	speech "cloud.google.com/go/speech/apiv1"
 	"cloud.google.com/go/speech/apiv1/speechpb"
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
@@ -194,89 +196,78 @@ func (app *App) GetGeminiResponse(query string) (string, error) {
 }
 
 func (app *App) RunTextToSpeech(langCode string, text string) error {
-	stream, err := app.ttsClient.StreamingSynthesize(context.Background())
+	req := &texttospeechpb.SynthesizeSpeechRequest{
+		Input: &texttospeechpb.SynthesisInput{
+			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
+		},
+		Voice: &texttospeechpb.VoiceSelectionParams{
+			LanguageCode: langCode,
+			SsmlGender:   texttospeechpb.SsmlVoiceGender_NEUTRAL,
+		},
+		AudioConfig: &texttospeechpb.AudioConfig{
+			AudioEncoding: texttospeechpb.AudioEncoding_LINEAR16,
+		},
+	}
+
+	resp, err := app.ttsClient.SynthesizeSpeech(context.Background(), req)
 	if err != nil {
 		return fmt.Errorf("error synthesizing speech: %w", err)
 	}
 
-	if err := stream.Send(&texttospeechpb.StreamingSynthesizeRequest{
-		StreamingRequest: &texttospeechpb.StreamingSynthesizeRequest_StreamingConfig{
-			StreamingConfig: &texttospeechpb.StreamingSynthesizeConfig{
-				Voice: &texttospeechpb.VoiceSelectionParams{
-					LanguageCode: langCode,
-					SsmlGender:   texttospeechpb.SsmlVoiceGender_NEUTRAL,
-				},
-			},
-		},
-	}); err != nil {
-		log.Fatalf("Failed to send a request: %v", err)
+	contentBuffer := bytes.NewBuffer(resp.AudioContent)
+
+	header, err := voicebot.ReadWavHeader(contentBuffer)
+	if err != nil {
+		return err
 	}
 
-	go func() {
-		defer stream.CloseSend()
+	// オーディオデータを読み取る
+	audioData := make([]byte, header.DataSize)
+	if _, err := io.ReadFull(contentBuffer, audioData); err != nil {
+		log.Fatalf("オーディオデータの読み取りに失敗しました: %v", err)
+	}
 
-		if err := stream.Send(&texttospeechpb.StreamingSynthesizeRequest{
-			StreamingRequest: &texttospeechpb.StreamingSynthesizeRequest_Input{
-				Input: &texttospeechpb.StreamingSynthesisInput{
-					InputSource: &texttospeechpb.StreamingSynthesisInput_Text{
-						Text: text,
-					},
-				},
-			},
-		}); err != nil {
-			log.Fatalf("Failed to send a request: %v", err)
-		}
-	}()
+	int16Data := make([]int16, len(resp.AudioContent)/2)
+	if err := binary.Read(bytes.NewReader(resp.AudioContent), binary.LittleEndian, &int16Data); err != nil {
+		log.Fatalf("バイトデータの読み取りに失敗しました: %v", err)
+	}
 
 	outDevice, err := portaudio.DefaultOutputDevice()
 	if err != nil {
 		log.Fatalf("デフォルトの出力デバイスの取得に失敗しました: %v", err)
 	}
 
-	audioData := make(chan []int16)
+	// ストリームのパラメータを設定
+	out := portaudio.StreamDeviceParameters{
+		Device:   outDevice,
+		Channels: int(header.Channels),
+		Latency:  outDevice.DefaultLowOutputLatency,
+	}
 
 	// ストリームを開く
-	audioStream, err := portaudio.OpenStream(portaudio.StreamParameters{
-		Output: portaudio.StreamDeviceParameters{
-			Device:   outDevice,
-			Channels: 1,
-			Latency:  outDevice.DefaultLowOutputLatency,
-		},
-		SampleRate:      24000,
-		FramesPerBuffer: 1024,
+	stream, err := portaudio.OpenStream(portaudio.StreamParameters{
+		Output:          out,
+		SampleRate:      float64(header.SampleRate),
+		FramesPerBuffer: len(int16Data),
 	}, func(out []int16) {
-		for data := range audioData {
-			copy(out, data)
-		}
+		copy(out, int16Data)
 	})
 	if err != nil {
 		log.Fatalf("ストリームのオープンに失敗しました: %v", err)
 	}
-	defer audioStream.Close()
+	defer stream.Close()
 
-	if err = audioStream.Start(); err != nil {
+	// ストリームを開始
+	err = stream.Start()
+	if err != nil {
 		log.Fatalf("ストリームの開始に失敗しました: %v", err)
 	}
 
-	for {
-		resp, err := stream.Recv()
-		if err == io.EOF {
-			close(audioData)
-			break
-		}
-		if err != nil {
-			log.Fatalf("Failed to receive a response: %v", err)
-		}
+	time.Sleep(time.Duration(header.DurationSeconds()) * time.Second)
 
-		int16Data := make([]int16, len(resp.AudioContent)/2)
-		if err := binary.Read(bytes.NewReader(resp.AudioContent), binary.LittleEndian, &int16Data); err != nil {
-			log.Fatalf("バイトデータの読み取りに失敗しました: %v", err)
-		}
-
-		audioData <- int16Data
-	}
-
-	if err = audioStream.Stop(); err != nil {
+	// ストリームを停止
+	err = stream.Stop()
+	if err != nil {
 		log.Fatalf("ストリームの停止に失敗しました: %v", err)
 	}
 
