@@ -148,7 +148,7 @@ Keep the following in mind when responding to guests:
 						"callType": {
 							Type:        genai.TypeString,
 							Description: "The type of the call.",
-							Enum:        []string{"trouble_in_stay", "not_enough_information", "emergency"},
+							Enum:        []string{"trouble_in_stay", "emergency", "about_billing"},
 						},
 					},
 					Required: []string{"message", "callType"},
@@ -366,7 +366,9 @@ func main() {
 		log.Fatal("Error loading .env.local file")
 	}
 
-	slog.SetLogLoggerLevel(slog.LevelDebug)
+	if val, ok := os.LookupEnv("DEBUG"); ok && val == "true" {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
 
 	app := App{}
 
@@ -423,7 +425,11 @@ func main() {
 				reservationCode := part.Args["reservationCode"].(string)
 				lockNumber := "4819"
 
-				log.Printf("[FunctionCall] GetDoorLockNumber: %v -> %v", reservationCode, lockNumber)
+				slog.Info(
+					"[FunctionCall] GetDoorLockNumber",
+					"reservationCode", reservationCode,
+					"lockNumber", lockNumber,
+				)
 
 				resp, err := chat.SendMessage(context.Background(), genai.FunctionResponse{
 					Name: "GetDoorLockNumber",
@@ -446,9 +452,14 @@ func main() {
 				message := part.Args["message"].(string)
 				callType := part.Args["callType"].(string)
 
-				log.Printf("[FunctionCall] AskForStaff: %v, %v, %v", reservationCode, message, callType)
+				slog.Info(
+					"[FunctionCall] AskForStaff",
+					"reservationCode", reservationCode,
+					"message", message,
+					"callType", callType,
+				)
 
-				log.Print("YOU>")
+				log.Print("AIからのエスカレーション要求です。スタッフとして返答お願いします>>>")
 				response := ""
 				if _, err := fmt.Scanln(&response); err != nil {
 					log.Fatal(err)
