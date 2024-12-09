@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
+	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/myuon/voicebot-ai-cli/voicebot"
 
 	speech "cloud.google.com/go/speech/apiv1"
@@ -82,6 +85,7 @@ func isSpeech(samples []int16) bool {
 }
 
 type App struct {
+	projectId    string
 	aiClient     *genai.Client
 	geminiModel  *genai.GenerativeModel
 	ttsClient    *texttospeech.Client
@@ -89,14 +93,17 @@ type App struct {
 }
 
 func (app *App) Init() error {
+	PROJECT_ID := os.Getenv("PROJECT_ID")
+
+	app.projectId = PROJECT_ID
+
 	if err := portaudio.Initialize(); err != nil {
 		return err
 	}
 
-	projectId := "default-364617"
 	region := "asia-northeast1"
 	modelName := "gemini-1.5-pro"
-	client, err := genai.NewClient(context.Background(), projectId, region)
+	client, err := genai.NewClient(context.Background(), PROJECT_ID, region)
 	if err != nil {
 		return fmt.Errorf("error creating client: %w", err)
 	}
@@ -354,12 +361,19 @@ func (app *App) StartChat() *genai.ChatSession {
 }
 
 func main() {
+	err := godotenv.Load(".env.local")
+	if err != nil {
+		log.Fatal("Error loading .env.local file")
+	}
+
 	app := App{}
 
 	if err := app.Init(); err != nil {
 		log.Fatal(err)
 	}
 	defer app.Close()
+
+	slog.Info("Initialized", "projectId", app.projectId)
 
 	chat := app.StartChat()
 
