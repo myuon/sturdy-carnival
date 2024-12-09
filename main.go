@@ -75,7 +75,7 @@ func RecordMicStream(writer io.Writer) error {
 }
 
 func isSpeech(samples []int16) bool {
-	threshold := int16(1000)
+	threshold := int16(750)
 	for _, sample := range samples {
 		if sample > threshold || sample < -threshold {
 			return true
